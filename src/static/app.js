@@ -3,6 +3,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  
+  // Check if user is logged in initially
+  checkAuthAndUpdateUI();
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -73,6 +76,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const activity = button.getAttribute("data-activity");
     const email = button.getAttribute("data-email");
 
+    // Check if user is logged in before proceeding
+    if (!window.auth.isLoggedIn()) {
+      messageDiv.textContent = "Please login first to perform this action";
+      messageDiv.className = "error";
+      messageDiv.classList.remove("hidden");
+      setTimeout(() => {
+        messageDiv.classList.add("hidden");
+      }, 5000);
+      return;
+    }
+
     try {
       const response = await fetch(
         `/activities/${encodeURIComponent(
@@ -80,6 +94,9 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/unregister?email=${encodeURIComponent(email)}`,
         {
           method: "DELETE",
+          headers: {
+            'Authorization': `Bearer ${window.auth.getToken()}`
+          }
         }
       );
 
@@ -114,16 +131,27 @@ document.addEventListener("DOMContentLoaded", () => {
   signupForm.addEventListener("submit", async (event) => {
     event.preventDefault();
 
-    const email = document.getElementById("email").value;
     const activity = document.getElementById("activity").value;
+    
+    // Check if user is logged in before proceeding
+    if (!window.auth.isLoggedIn()) {
+      messageDiv.textContent = "Please login first to sign up for activities";
+      messageDiv.className = "error";
+      messageDiv.classList.remove("hidden");
+      setTimeout(() => {
+        messageDiv.classList.add("hidden");
+      }, 5000);
+      return;
+    }
 
     try {
       const response = await fetch(
-        `/activities/${encodeURIComponent(
-          activity
-        )}/signup?email=${encodeURIComponent(email)}`,
+        `/activities/${encodeURIComponent(activity)}/signup`,
         {
           method: "POST",
+          headers: {
+            'Authorization': `Bearer ${window.auth.getToken()}`
+          }
         }
       );
 
@@ -155,6 +183,48 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Check auth status and update UI accordingly
+  function checkAuthAndUpdateUI() {
+    const signupSection = document.getElementById("signup-container");
+    
+    if (window.auth.isLoggedIn()) {
+      // Enable signup functionality
+      signupForm.classList.remove("disabled");
+      // Update buttons on activity cards based on user role
+      updateActivityCardControls();
+    } else {
+      // Disable signup functionality
+      signupForm.classList.add("disabled");
+    }
+  }
+  
+  // Update buttons on activity cards based on user role
+  function updateActivityCardControls() {
+    const currentUser = window.auth.getCurrentUser();
+    
+    if (!currentUser) return;
+    
+    // Show/hide delete buttons based on role
+    const deleteButtons = document.querySelectorAll('.delete-btn');
+    
+    if (currentUser.role === 'advisor' || currentUser.role === 'admin') {
+      // Allow deleting participants for advisors and admins
+      deleteButtons.forEach(btn => {
+        btn.style.display = 'inline';
+      });
+    } else {
+      // Hide delete buttons for students
+      deleteButtons.forEach(btn => {
+        btn.style.display = 'none';
+      });
+    }
+  }
+
+  // Listen for authentication state changes
+  document.addEventListener('authStateChanged', () => {
+    checkAuthAndUpdateUI();
+  });
+  
   // Initialize app
   fetchActivities();
 });

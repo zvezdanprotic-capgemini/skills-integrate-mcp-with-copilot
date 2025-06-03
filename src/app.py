@@ -5,11 +5,15 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
+from datetime import timedelta
 import os
 from pathlib import Path
+from . import auth
+from .auth import User, Token, UserRole, get_current_active_user, has_role, create_access_token
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
@@ -83,13 +87,55 @@ def root():
     return RedirectResponse(url="/static/index.html")
 
 
+@app.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    """Generate a JWT token for authenticated users"""
+    user = auth.authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.email}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.post("/users/register", response_model=User)
+async def register_user(email: str, password: str, full_name: str = None):
+    """Register a new student user"""
+    try:
+        user = auth.create_user(email, password, full_name, role=UserRole.STUDENT)
+        return user
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating user: {str(e)}"
+        )
+
+
+@app.get("/users/me", response_model=User)
+async def read_users_me(current_user: User = Depends(get_current_active_user)):
+    """Get information about the currently authenticated user"""
+    return current_user
+
+
 @app.get("/activities")
 def get_activities():
     return activities
 
 
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
+async def signup_for_activity(
+    activity_name: str, 
+    current_user: User = Depends(get_current_active_user)
+):
     """Sign up a student for an activity"""
     # Validate activity exists
     if activity_name not in activities:
@@ -97,6 +143,9 @@ def signup_for_activity(activity_name: str, email: str):
 
     # Get the specific activity
     activity = activities[activity_name]
+
+    # Get the user's email
+    email = current_user.email
 
     # Validate student is not already signed up
     if email in activity["participants"]:
@@ -111,8 +160,12 @@ def signup_for_activity(activity_name: str, email: str):
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
-    """Unregister a student from an activity"""
+async def unregister_from_activity(
+    activity_name: str, 
+    email: str,
+    current_user: User = Depends(has_role([UserRole.ADVISOR, UserRole.ADMIN]))
+):
+    """Unregister a student from an activity (requires advisor or admin role)"""
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
